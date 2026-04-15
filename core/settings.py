@@ -125,6 +125,7 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'https://geoclimatz.pythonanywhere.com',
+    'https://admin-dashboard.geoclimatz.org',
 ]
 
 # Needed when frontend and backend run on different origins (e.g. localhost dashboard -> pythonanywhere API).
