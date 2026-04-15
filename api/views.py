@@ -74,7 +74,7 @@ def _user_payload(user: User) -> dict:
         if getattr(profile, "avatar_file", None):
             avatar = profile.avatar_file.url
             if avatar.startswith("/"):
-                avatar = f"http://localhost:8000{avatar}"
+                avatar = f"https://geoclimatz.pythonanywhere.com{avatar}"
         elif profile.avatar_url:
             avatar = profile.avatar_url
     return {
