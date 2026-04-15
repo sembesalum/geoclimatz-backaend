@@ -3,6 +3,7 @@ import random
 from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import models
 from django.db.models import Count, Q
@@ -62,6 +63,17 @@ def _get_role(user: User) -> str:
     return role if role in LOGIN_ALLOWED_ROLES else UserProfile.Role.COO
 
 
+def _absolute_media_url(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        base = getattr(settings, "PUBLIC_BASE_URL", "https://geoclimatz.pythonanywhere.com")
+        return f"{base}{url}"
+    return url
+
+
 def _user_payload(user: User) -> dict:
     profile = getattr(user, "profile", None)
     if user.is_superuser:
@@ -72,9 +84,7 @@ def _user_payload(user: User) -> dict:
     avatar = ""
     if profile:
         if getattr(profile, "avatar_file", None):
-            avatar = profile.avatar_file.url
-            if avatar.startswith("/"):
-                avatar = f"https://geoclimatz.pythonanywhere.com{avatar}"
+            avatar = _absolute_media_url(profile.avatar_file.url)
         elif profile.avatar_url:
             avatar = profile.avatar_url
     return {
@@ -365,7 +375,7 @@ def posts_collection(request: HttpRequest):
                     "status": p.status,
                     "body": p.body,
                     "body_format": p.body_format,
-                    "hero_image_url": p.hero_image_url,
+                    "hero_image_url": _absolute_media_url(p.hero_image_file.url) if p.hero_image_file else p.hero_image_url,
                     "author": p.author.username if p.author else None,
                     "created_at": p.created_at.isoformat(),
                     "analytics": {
@@ -377,7 +387,7 @@ def posts_collection(request: HttpRequest):
             )
         return JsonResponse({"results": posts})
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     if not body.get("title"):
         return JsonResponse({"error": "title is required"}, status=400)
     post = BlogPost.objects.create(
@@ -386,6 +396,7 @@ def posts_collection(request: HttpRequest):
         body=body.get("body", ""),
         body_format=body.get("body_format", BlogPost.BodyFormat.MARKDOWN),
         hero_image_url=body.get("hero_image_url", ""),
+        hero_image_file=files.get("hero_image"),
         status=body.get("status", BlogPost.Status.DRAFT),
         author=request.user,
         published_at=timezone.now() if body.get("status") == BlogPost.Status.PUBLISHED else None,
@@ -414,12 +425,14 @@ def post_detail(request: HttpRequest, post_id: int):
         ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message=f'Deleted post "{title}"')
         return JsonResponse({"ok": True})
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     post.title = body.get("title", post.title)
     post.description = body.get("description", post.description)
     post.body = body.get("body", post.body)
     post.body_format = body.get("body_format", post.body_format)
     post.hero_image_url = body.get("hero_image_url", post.hero_image_url)
+    if files.get("hero_image"):
+        post.hero_image_file = files.get("hero_image")
     post.status = body.get("status", post.status)
     if post.status == BlogPost.Status.PUBLISHED and not post.published_at:
         post.published_at = timezone.now()
@@ -434,12 +447,31 @@ def post_detail(request: HttpRequest, post_id: int):
 def gallery_collection(request: HttpRequest):
     _, gallery_qs = _content_scope_for_user(request)
     if request.method == "GET":
-        return JsonResponse({"results": list(gallery_qs.values("id", "caption", "image_url", "created_at"))})
+        return JsonResponse(
+            {
+                "results": [
+                    {
+                        "id": g.id,
+                        "caption": g.caption,
+                        "image_url": _absolute_media_url(g.image_file.url) if g.image_file else g.image_url,
+                        "created_at": g.created_at.isoformat(),
+                    }
+                    for g in gallery_qs
+                ]
+            }
+        )
 
-    body = _json_body(request)
-    if not body.get("image_url"):
-        return JsonResponse({"error": "image_url is required"}, status=400)
-    image = GalleryImage.objects.create(caption=body.get("caption", ""), image_url=body["image_url"], uploaded_by=request.user)
+    body, files = _request_data(request)
+    image_url = body.get("image_url", "")
+    image_file = files.get("image_file")
+    if not image_url and not image_file:
+        return JsonResponse({"error": "image_url or image_file is required"}, status=400)
+    image = GalleryImage.objects.create(
+        caption=body.get("caption", ""),
+        image_url=image_url,
+        image_file=image_file,
+        uploaded_by=request.user,
+    )
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.CREATE, message="Uploaded gallery image")
     return JsonResponse({"id": image.id}, status=201)
 
@@ -795,7 +827,7 @@ def testimonials_collection(request: HttpRequest):
                         "role_title": row.role_title,
                         "company": row.company,
                         "quote": row.quote,
-                        "avatar_url": row.avatar_url,
+                        "avatar_url": _absolute_media_url(row.avatar_file.url) if row.avatar_file else row.avatar_url,
                         "rating": row.rating,
                         "featured": row.featured,
                         "created_by": row.created_by.username if row.created_by else None,
@@ -806,7 +838,7 @@ def testimonials_collection(request: HttpRequest):
             }
         )
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     if not body.get("name") or not body.get("quote"):
         return JsonResponse({"error": "name and quote are required"}, status=400)
     testimonial = Testimonial.objects.create(
@@ -815,6 +847,7 @@ def testimonials_collection(request: HttpRequest):
         company=body.get("company", ""),
         quote=body["quote"],
         avatar_url=body.get("avatar_url", ""),
+        avatar_file=files.get("avatar_image"),
         rating=max(1, min(5, int(body.get("rating", 5)))),
         featured=bool(body.get("featured", False)),
         created_by=request.user,
@@ -837,12 +870,14 @@ def testimonial_detail(request: HttpRequest, testimonial_id: int):
         ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message=f'Deleted testimonial "{name}"')
         return JsonResponse({"ok": True})
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     testimonial.name = body.get("name", testimonial.name)
     testimonial.role_title = body.get("role_title", testimonial.role_title)
     testimonial.company = body.get("company", testimonial.company)
     testimonial.quote = body.get("quote", testimonial.quote)
     testimonial.avatar_url = body.get("avatar_url", testimonial.avatar_url)
+    if files.get("avatar_image"):
+        testimonial.avatar_file = files.get("avatar_image")
     if "rating" in body:
         testimonial.rating = max(1, min(5, int(body["rating"])))
     if "featured" in body:
@@ -865,7 +900,7 @@ def team_collection(request: HttpRequest):
                         "name": row.name,
                         "role_title": row.role_title,
                         "bio": row.bio,
-                        "image_url": row.image_url,
+                        "image_url": _absolute_media_url(row.image_file.url) if row.image_file else row.image_url,
                         "email": row.email,
                         "linkedin_url": row.linkedin_url,
                         "is_active": row.is_active,
@@ -876,7 +911,7 @@ def team_collection(request: HttpRequest):
             }
         )
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     if not body.get("name") or not body.get("role_title"):
         return JsonResponse({"error": "name and role_title are required"}, status=400)
     member = TeamMember.objects.create(
@@ -884,6 +919,7 @@ def team_collection(request: HttpRequest):
         role_title=body["role_title"],
         bio=body.get("bio", ""),
         image_url=body.get("image_url", ""),
+        image_file=files.get("image_file"),
         email=body.get("email", ""),
         linkedin_url=body.get("linkedin_url", ""),
         is_active=bool(body.get("is_active", True)),
@@ -907,11 +943,13 @@ def team_detail(request: HttpRequest, member_id: int):
         ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message=f'Deleted team member "{name}"')
         return JsonResponse({"ok": True})
 
-    body = _json_body(request)
+    body, files = _request_data(request)
     member.name = body.get("name", member.name)
     member.role_title = body.get("role_title", member.role_title)
     member.bio = body.get("bio", member.bio)
     member.image_url = body.get("image_url", member.image_url)
+    if files.get("image_file"):
+        member.image_file = files.get("image_file")
     member.email = body.get("email", member.email)
     member.linkedin_url = body.get("linkedin_url", member.linkedin_url)
     if "is_active" in body:

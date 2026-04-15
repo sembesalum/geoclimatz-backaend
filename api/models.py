@@ -76,6 +76,7 @@ class BlogPost(TimeStampedModel):
     body = models.TextField(blank=True)
     body_format = models.CharField(max_length=20, choices=BodyFormat.choices, default=BodyFormat.MARKDOWN)
     hero_image_url = models.URLField(blank=True)
+    hero_image_file = models.FileField(upload_to="content/posts/", blank=True, null=True)
     published_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -85,6 +86,7 @@ class BlogPost(TimeStampedModel):
 class GalleryImage(TimeStampedModel):
     caption = models.CharField(max_length=255)
     image_url = models.URLField()
+    image_file = models.FileField(upload_to="content/gallery/", blank=True, null=True)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
@@ -235,6 +237,7 @@ class Testimonial(TimeStampedModel):
     company = models.CharField(max_length=120, blank=True)
     quote = models.TextField()
     avatar_url = models.URLField(blank=True)
+    avatar_file = models.FileField(upload_to="testimonials/", blank=True, null=True)
     rating = models.PositiveSmallIntegerField(default=5)
     featured = models.BooleanField(default=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -248,6 +251,7 @@ class TeamMember(TimeStampedModel):
     role_title = models.CharField(max_length=120)
     bio = models.TextField(blank=True)
     image_url = models.URLField(blank=True)
+    image_file = models.FileField(upload_to="team/", blank=True, null=True)
     email = models.EmailField(blank=True)
     linkedin_url = models.URLField(blank=True)
     is_active = models.BooleanField(default=True)
