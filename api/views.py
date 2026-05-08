@@ -1,7 +1,7 @@
 import json
 import random
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
@@ -598,7 +598,27 @@ def task_create(request: HttpRequest):
     if not body.get("title"):
         return JsonResponse({"error": "title is required"}, status=400)
 
-    assignee = User.objects.filter(pk=body.get("assignee_id")).first() if body.get("assignee_id") else None
+    assignee = None
+    assignee_id = body.get("assignee_id")
+    if assignee_id is not None:
+        try:
+            assignee = User.objects.filter(pk=int(assignee_id)).first()
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "assignee_id must be a valid user id"}, status=400)
+
+    due_date_value = None
+    due_date_raw = body.get("due_date")
+    if due_date_raw:
+        try:
+            due_date_value = date.fromisoformat(str(due_date_raw))
+        except ValueError:
+            return JsonResponse({"error": "due_date must be YYYY-MM-DD"}, status=400)
+
+    try:
+        position_value = Decimal(str(body.get("position", 1000)))
+    except (InvalidOperation, TypeError, ValueError):
+        return JsonResponse({"error": "position must be numeric"}, status=400)
+
     role = _get_role(request.user)
     if role == UserProfile.Role.COO:
         return JsonResponse({"error": "Only CEO or Admin can assign tasks"}, status=403)
@@ -612,8 +632,8 @@ def task_create(request: HttpRequest):
         description=body.get("description", ""),
         column=body.get("column", Task.Column.PENDING),
         priority=body.get("priority", Task.Priority.MEDIUM),
-        due_date=body.get("due_date") or None,
-        position=Decimal(str(body.get("position", 1000))),
+        due_date=due_date_value,
+        position=position_value,
         parent_id=body.get("parent_id"),
         assignee=assignee,
         created_by=request.user,
