@@ -63,12 +63,14 @@ def _get_role(user: User) -> str:
     return role if role in LOGIN_ALLOWED_ROLES else UserProfile.Role.COO
 
 
-def _absolute_media_url(url: str) -> str:
+def _absolute_media_url(url: str, request: HttpRequest | None = None) -> str:
     if not url:
         return ""
     if url.startswith("http://") or url.startswith("https://"):
         return url
     if url.startswith("/"):
+        if request is not None:
+            return request.build_absolute_uri(url)
         base = getattr(settings, "PUBLIC_BASE_URL", "https://geoclimatz.pythonanywhere.com")
         return f"{base}{url}"
     return url
@@ -89,7 +91,7 @@ def _to_int(value, default=0) -> int:
         return default
 
 
-def _user_payload(user: User) -> dict:
+def _user_payload(user: User, request: HttpRequest | None = None) -> dict:
     profile = getattr(user, "profile", None)
     if user.is_superuser:
         resolved_role = UserProfile.Role.ADMIN
@@ -99,7 +101,7 @@ def _user_payload(user: User) -> dict:
     avatar = ""
     if profile:
         if getattr(profile, "avatar_file", None):
-            avatar = _absolute_media_url(profile.avatar_file.url)
+            avatar = _absolute_media_url(profile.avatar_file.url, request=request)
         elif profile.avatar_url:
             avatar = profile.avatar_url
     return {
@@ -180,7 +182,7 @@ def auth_login(request: HttpRequest):
 
     login(request, user)
     ActivityLog.objects.create(actor=user, kind=ActivityLog.Kind.AUTH, message=f"{user.username} logged in")
-    return JsonResponse({"user": _user_payload(user)})
+    return JsonResponse({"user": _user_payload(user, request=request)})
 
 
 @csrf_exempt
@@ -196,7 +198,7 @@ def auth_logout(request: HttpRequest):
 def auth_me(request: HttpRequest):
     if not request.user.is_authenticated:
         return JsonResponse({"authenticated": False, "user": None})
-    return JsonResponse({"authenticated": True, "user": _user_payload(request.user)})
+    return JsonResponse({"authenticated": True, "user": _user_payload(request.user, request=request)})
 
 
 @csrf_exempt
@@ -204,7 +206,7 @@ def auth_me(request: HttpRequest):
 @api_login_required
 def auth_profile(request: HttpRequest):
     if request.method == "GET":
-        return JsonResponse({"user": _user_payload(request.user)})
+        return JsonResponse({"user": _user_payload(request.user, request=request)})
 
     body, files = _request_data(request)
     user = request.user
@@ -228,7 +230,7 @@ def auth_profile(request: HttpRequest):
         user.save()
         login(request, user)
 
-    return JsonResponse({"user": _user_payload(user)})
+    return JsonResponse({"user": _user_payload(user, request=request)})
 
 
 @require_GET
@@ -292,7 +294,7 @@ def analytics(_: HttpRequest):
 def users_collection(request: HttpRequest):
     if request.method == "GET":
         users = User.objects.select_related("profile").all().order_by("id")
-        return JsonResponse({"results": [_user_payload(u) for u in users]})
+        return JsonResponse({"results": [_user_payload(u, request=request) for u in users]})
 
     body, files = _request_data(request)
     if not body.get("username") or not body.get("email") or not body.get("password"):
@@ -318,7 +320,7 @@ def users_collection(request: HttpRequest):
         avatar_file=files.get("avatar_image"),
     )
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.CREATE, message=f"Created user {user.username}")
-    return JsonResponse({"user": _user_payload(user)}, status=201)
+    return JsonResponse({"user": _user_payload(user, request=request)}, status=201)
 
 
 @csrf_exempt
@@ -331,7 +333,7 @@ def user_detail(request: HttpRequest, user_id: int):
         return JsonResponse({"error": "User not found"}, status=404)
 
     if request.method == "GET":
-        return JsonResponse({"user": _user_payload(user)})
+        return JsonResponse({"user": _user_payload(user, request=request)})
 
     if request.method == "DELETE":
         username = user.username
@@ -363,7 +365,7 @@ def user_detail(request: HttpRequest, user_id: int):
     profile.save()
 
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f"Updated user {user.username}")
-    return JsonResponse({"user": _user_payload(user)})
+    return JsonResponse({"user": _user_payload(user, request=request)})
 
 
 def _content_scope_for_user(request: HttpRequest):
@@ -390,7 +392,7 @@ def posts_collection(request: HttpRequest):
                     "status": p.status,
                     "body": p.body,
                     "body_format": p.body_format,
-                    "hero_image_url": _absolute_media_url(p.hero_image_file.url) if p.hero_image_file else p.hero_image_url,
+                    "hero_image_url": _absolute_media_url(p.hero_image_file.url, request=request) if p.hero_image_file else p.hero_image_url,
                     "author": p.author.username if p.author else None,
                     "created_at": p.created_at.isoformat(),
                     "analytics": {
@@ -468,7 +470,7 @@ def gallery_collection(request: HttpRequest):
                     {
                         "id": g.id,
                         "caption": g.caption,
-                        "image_url": _absolute_media_url(g.image_file.url) if g.image_file else g.image_url,
+                        "image_url": _absolute_media_url(g.image_file.url, request=request) if g.image_file else g.image_url,
                         "created_at": g.created_at.isoformat(),
                     }
                     for g in gallery_qs
@@ -755,9 +757,9 @@ def admin_summary(_: HttpRequest):
 
 @require_GET
 @roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
-def members_list(_: HttpRequest):
+def members_list(request: HttpRequest):
     users = User.objects.select_related("profile").all().order_by("first_name", "last_name", "username")
-    return JsonResponse({"results": [_user_payload(u) for u in users]})
+    return JsonResponse({"results": [_user_payload(u, request=request) for u in users]})
 
 
 @csrf_exempt
@@ -854,7 +856,7 @@ def testimonials_collection(request: HttpRequest):
                         "role_title": row.role_title,
                         "company": row.company,
                         "quote": row.quote,
-                        "avatar_url": _absolute_media_url(row.avatar_file.url) if row.avatar_file else row.avatar_url,
+                        "avatar_url": _absolute_media_url(row.avatar_file.url, request=request) if row.avatar_file else row.avatar_url,
                         "rating": row.rating,
                         "featured": row.featured,
                         "created_by": row.created_by.username if row.created_by else None,
@@ -927,7 +929,7 @@ def team_collection(request: HttpRequest):
                         "name": row.name,
                         "role_title": row.role_title,
                         "bio": row.bio,
-                        "image_url": _absolute_media_url(row.image_file.url) if row.image_file else row.image_url,
+                        "image_url": _absolute_media_url(row.image_file.url, request=request) if row.image_file else row.image_url,
                         "email": row.email,
                         "linkedin_url": row.linkedin_url,
                         "is_active": row.is_active,
