@@ -320,8 +320,7 @@ def users_collection(request: HttpRequest):
     role = body.get("role", UserProfile.Role.COO)
     if role not in LOGIN_ALLOWED_ROLES:
         role = UserProfile.Role.COO
-    if _get_role(request.user) == UserProfile.Role.CEO and role not in {UserProfile.Role.COO}:
-        role = UserProfile.Role.COO
+    # Admin and CEO currently share the same user-management privileges.
     UserProfile.objects.create(
         user=user,
         role=role,
@@ -360,14 +359,9 @@ def user_detail(request: HttpRequest, user_id: int):
     user.save()
 
     profile, _ = UserProfile.objects.get_or_create(user=user)
-    if _get_role(request.user) == UserProfile.Role.CEO:
-        profile.role = body.get("role", profile.role)
-        if profile.role not in {UserProfile.Role.COO}:
-            profile.role = UserProfile.Role.COO
-    else:
-        profile.role = body.get("role", profile.role)
-        if profile.role not in LOGIN_ALLOWED_ROLES:
-            profile.role = UserProfile.Role.COO
+    profile.role = body.get("role", profile.role)
+    if profile.role not in LOGIN_ALLOWED_ROLES:
+        profile.role = UserProfile.Role.COO
     profile.status = body.get("status", profile.status)
     profile.avatar_url = body.get("avatar_url", profile.avatar_url)
     if files.get("avatar_image"):
@@ -589,10 +583,10 @@ def task_create(request: HttpRequest):
     role = _get_role(request.user)
     if role == UserProfile.Role.COO:
         return JsonResponse({"error": "Only CEO or Admin can assign tasks"}, status=403)
-    if role == UserProfile.Role.CEO and assignee:
+    if assignee:
         assignee_role = _get_role(assignee)
-        if assignee_role not in {UserProfile.Role.CEO, UserProfile.Role.COO}:
-            return JsonResponse({"error": "CEO can assign only to CEO/COO"}, status=403)
+        if assignee_role not in LOGIN_ALLOWED_ROLES:
+            return JsonResponse({"error": "Can assign only to Admin/CEO/COO"}, status=403)
 
     task = Task.objects.create(
         title=body["title"],
@@ -662,10 +656,10 @@ def task_detail(request: HttpRequest, task_id: int):
         if role == UserProfile.Role.COO:
             return JsonResponse({"error": "COO cannot reassign tasks"}, status=403)
         next_assignee = User.objects.filter(pk=body["assignee_id"]).first()
-        if role == UserProfile.Role.CEO and next_assignee:
+        if next_assignee:
             assignee_role = _get_role(next_assignee)
-            if assignee_role not in {UserProfile.Role.CEO, UserProfile.Role.COO}:
-                return JsonResponse({"error": "CEO can assign only to CEO/COO"}, status=403)
+            if assignee_role not in LOGIN_ALLOWED_ROLES:
+                return JsonResponse({"error": "Can assign only to Admin/CEO/COO"}, status=403)
         task.assignee = next_assignee
     task.save()
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f'Updated task "{task.title}"')
@@ -737,7 +731,7 @@ def task_followup_create(request: HttpRequest, task_id: int):
 
 
 @require_GET
-@roles_required(UserProfile.Role.ADMIN)
+@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
 def performance(_: HttpRequest):
     latest = PerformanceMetric.objects.order_by("-id").first()
     cards = {
@@ -751,7 +745,7 @@ def performance(_: HttpRequest):
 
 
 @require_GET
-@roles_required(UserProfile.Role.ADMIN)
+@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
 def activity_logs(request: HttpRequest):
     limit = int(request.GET.get("limit", 50))
     logs = [
@@ -769,7 +763,7 @@ def activity_logs(request: HttpRequest):
 
 
 @require_GET
-@roles_required(UserProfile.Role.ADMIN)
+@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
 def admin_summary(_: HttpRequest):
     return JsonResponse(
         {
@@ -1079,8 +1073,8 @@ def brainstorm_collection(request: HttpRequest):
     idea = BrainstormIdea.objects.filter(pk=body.get("id")).first()
     if not idea:
         return JsonResponse({"error": "Idea not found"}, status=404)
-    if idea.author_id != request.user.id and role != UserProfile.Role.ADMIN:
-        return JsonResponse({"error": "Only author or admin can modify"}, status=403)
+    if idea.author_id != request.user.id and role not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+        return JsonResponse({"error": "Only author, Admin, or CEO can modify"}, status=403)
 
     if request.method == "DELETE":
         idea.delete()
