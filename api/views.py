@@ -557,7 +557,7 @@ def _task_scope_for_user(request: HttpRequest):
     qs = Task.objects.select_related("assignee", "created_by").prefetch_related("subtasks", "comments", "followups")
     if role in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
         return qs
-    return qs.filter(Q(assignee=request.user) | Q(created_by=request.user))
+    return qs.filter(assignee=request.user)
 
 
 @require_GET
@@ -587,6 +587,8 @@ def task_create(request: HttpRequest):
 
     assignee = User.objects.filter(pk=body.get("assignee_id")).first() if body.get("assignee_id") else None
     role = _get_role(request.user)
+    if role == UserProfile.Role.COO:
+        return JsonResponse({"error": "Only CEO or Admin can assign tasks"}, status=403)
     if role == UserProfile.Role.CEO and assignee:
         assignee_role = _get_role(assignee)
         if assignee_role not in {UserProfile.Role.CEO, UserProfile.Role.COO}:
@@ -620,8 +622,8 @@ def task_detail(request: HttpRequest, task_id: int):
         return JsonResponse({"error": "Task not found"}, status=404)
 
     role = _get_role(request.user)
-    if role == UserProfile.Role.COO and not (task.assignee_id == request.user.id or task.created_by_id == request.user.id):
-        return JsonResponse({"error": "COO can access only related tasks"}, status=403)
+    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+        return JsonResponse({"error": "COO can access only assigned tasks"}, status=403)
 
     if request.method == "GET":
         payload = _task_payload(task)
@@ -636,8 +638,8 @@ def task_detail(request: HttpRequest, task_id: int):
         return JsonResponse({"task": payload})
 
     if request.method == "DELETE":
-        if role == UserProfile.Role.COO and task.created_by_id != request.user.id:
-            return JsonResponse({"error": "COO can delete only own-created tasks"}, status=403)
+        if role == UserProfile.Role.COO:
+            return JsonResponse({"error": "COO cannot delete tasks"}, status=403)
         title = task.title
         task.delete()
         ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message=f'Deleted task "{title}"')
@@ -657,7 +659,14 @@ def task_detail(request: HttpRequest, task_id: int):
     if body.get("due_date") is not None:
         task.due_date = body.get("due_date") or None
     if body.get("assignee_id") is not None:
-        task.assignee = User.objects.filter(pk=body["assignee_id"]).first()
+        if role == UserProfile.Role.COO:
+            return JsonResponse({"error": "COO cannot reassign tasks"}, status=403)
+        next_assignee = User.objects.filter(pk=body["assignee_id"]).first()
+        if role == UserProfile.Role.CEO and next_assignee:
+            assignee_role = _get_role(next_assignee)
+            if assignee_role not in {UserProfile.Role.CEO, UserProfile.Role.COO}:
+                return JsonResponse({"error": "CEO can assign only to CEO/COO"}, status=403)
+        task.assignee = next_assignee
     task.save()
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f'Updated task "{task.title}"')
     return JsonResponse({"task": _task_payload(task)})
@@ -673,8 +682,8 @@ def task_move(request: HttpRequest, task_id: int):
         return JsonResponse({"error": "Task not found"}, status=404)
 
     role = _get_role(request.user)
-    if role == UserProfile.Role.COO and not (task.assignee_id == request.user.id or task.created_by_id == request.user.id):
-        return JsonResponse({"error": "COO can move only related tasks"}, status=403)
+    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+        return JsonResponse({"error": "COO can move only assigned tasks"}, status=403)
 
     body = _json_body(request)
     task.column = body.get("column", task.column)
@@ -694,6 +703,10 @@ def task_comment_create(request: HttpRequest, task_id: int):
     except Task.DoesNotExist:
         return JsonResponse({"error": "Task not found"}, status=404)
 
+    role = _get_role(request.user)
+    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+        return JsonResponse({"error": "COO can comment only on assigned tasks"}, status=403)
+
     message = _json_body(request).get("message", "").strip()
     if not message:
         return JsonResponse({"error": "message is required"}, status=400)
@@ -710,6 +723,10 @@ def task_followup_create(request: HttpRequest, task_id: int):
         task = Task.objects.get(pk=task_id)
     except Task.DoesNotExist:
         return JsonResponse({"error": "Task not found"}, status=404)
+
+    role = _get_role(request.user)
+    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+        return JsonResponse({"error": "COO can request followup only on assigned tasks"}, status=403)
 
     message = _json_body(request).get("message", "").strip()
     if not message:
@@ -766,7 +783,7 @@ def admin_summary(_: HttpRequest):
 
 
 @require_GET
-@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
+@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def members_list(request: HttpRequest):
     users = User.objects.select_related("profile").all().order_by("first_name", "last_name", "username")
     return JsonResponse({"results": [_user_payload(u, request=request) for u in users]})
@@ -791,10 +808,13 @@ def member_requests(request: HttpRequest):
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+    role = _get_role(request.user)
+    if role not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
         return JsonResponse({"error": "Forbidden for this role"}, status=403)
 
     if request.method == "PATCH":
+        if role not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+            return JsonResponse({"error": "Only Admin/CEO can update requests"}, status=403)
         body = _json_body(request)
         req_id = body.get("id")
         status = body.get("status")
@@ -823,7 +843,7 @@ def newsletter_collection(request: HttpRequest):
 
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required"}, status=401)
-    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
         return JsonResponse({"error": "Forbidden for this role"}, status=403)
     return JsonResponse({"results": list(NewsletterSubscriber.objects.values("id", "email", "name", "created_at"))})
 
@@ -847,7 +867,7 @@ def donations_collection(request: HttpRequest):
 
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required"}, status=401)
-    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
         return JsonResponse({"error": "Forbidden for this role"}, status=403)
     return JsonResponse({"results": list(Donation.objects.values())})
 
@@ -930,7 +950,11 @@ def testimonial_detail(request: HttpRequest, testimonial_id: int):
 @require_http_methods(["GET", "POST"])
 @roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def team_collection(request: HttpRequest):
+    role = _get_role(request.user)
     if request.method == "GET":
+        rows = TeamMember.objects.all()
+        if role == UserProfile.Role.COO:
+            rows = rows.filter(email__iexact=request.user.email)
         return JsonResponse(
             {
                 "results": [
@@ -945,10 +969,13 @@ def team_collection(request: HttpRequest):
                         "is_active": row.is_active,
                         "display_order": row.display_order,
                     }
-                    for row in TeamMember.objects.all()
+                    for row in rows
                 ]
             }
         )
+
+    if role == UserProfile.Role.COO:
+        return JsonResponse({"error": "COO cannot create team members"}, status=403)
 
     body, files = _request_data(request)
     if not body.get("name") or not body.get("role_title"):
@@ -975,8 +1002,13 @@ def team_detail(request: HttpRequest, member_id: int):
     member = TeamMember.objects.filter(pk=member_id).first()
     if not member:
         return JsonResponse({"error": "Team member not found"}, status=404)
+    role = _get_role(request.user)
+    if role == UserProfile.Role.COO and member.email.strip().lower() != request.user.email.strip().lower():
+        return JsonResponse({"error": "COO can edit only own team profile"}, status=403)
 
     if request.method == "DELETE":
+        if role == UserProfile.Role.COO:
+            return JsonResponse({"error": "COO cannot delete team members"}, status=403)
         name = member.name
         member.delete()
         ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message=f'Deleted team member "{name}"')
