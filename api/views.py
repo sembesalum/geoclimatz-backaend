@@ -477,7 +477,7 @@ def gallery_collection(request: HttpRequest):
 
 
 @csrf_exempt
-@require_http_methods(["DELETE"])
+@require_http_methods(["PATCH", "DELETE"])
 @roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def gallery_detail(request: HttpRequest, image_id: int):
     try:
@@ -487,7 +487,19 @@ def gallery_detail(request: HttpRequest, image_id: int):
 
     role = _get_role(request.user)
     if role == UserProfile.Role.COO and image.uploaded_by_id != request.user.id:
-        return JsonResponse({"error": "COO can delete only own media"}, status=403)
+        return JsonResponse({"error": "COO can modify/delete only own media"}, status=403)
+
+    if request.method == "PATCH":
+        body, files = _request_data(request)
+        if "caption" in body:
+            image.caption = body.get("caption", image.caption)
+        if "image_url" in body:
+            image.image_url = body.get("image_url", image.image_url)
+        if files.get("image_file"):
+            image.image_file = files.get("image_file")
+        image.save()
+        ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message="Updated gallery image")
+        return JsonResponse({"ok": True})
 
     image.delete()
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.DELETE, message="Deleted gallery image")
