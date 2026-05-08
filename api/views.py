@@ -74,6 +74,21 @@ def _absolute_media_url(url: str) -> str:
     return url
 
 
+def _to_bool(value, default=False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _to_int(value, default=0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _user_payload(user: User) -> dict:
     profile = getattr(user, "profile", None)
     if user.is_superuser:
@@ -861,7 +876,7 @@ def testimonials_collection(request: HttpRequest):
         avatar_url=body.get("avatar_url", ""),
         avatar_file=files.get("avatar_image"),
         rating=max(1, min(5, int(body.get("rating", 5)))),
-        featured=bool(body.get("featured", False)),
+        featured=_to_bool(body.get("featured", False), default=False),
         created_by=request.user,
     )
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.CREATE, message=f'Created testimonial "{testimonial.name}"')
@@ -893,7 +908,7 @@ def testimonial_detail(request: HttpRequest, testimonial_id: int):
     if "rating" in body:
         testimonial.rating = max(1, min(5, int(body["rating"])))
     if "featured" in body:
-        testimonial.featured = bool(body["featured"])
+        testimonial.featured = _to_bool(body["featured"], default=testimonial.featured)
     testimonial.save()
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f'Updated testimonial "{testimonial.name}"')
     return JsonResponse({"ok": True})
@@ -934,8 +949,8 @@ def team_collection(request: HttpRequest):
         image_file=files.get("image_file"),
         email=body.get("email", ""),
         linkedin_url=body.get("linkedin_url", ""),
-        is_active=bool(body.get("is_active", True)),
-        display_order=int(body.get("display_order", 0)),
+        is_active=_to_bool(body.get("is_active", True), default=True),
+        display_order=_to_int(body.get("display_order", 0), default=0),
     )
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.CREATE, message=f'Created team member "{member.name}"')
     return JsonResponse({"id": member.id}, status=201)
@@ -965,9 +980,9 @@ def team_detail(request: HttpRequest, member_id: int):
     member.email = body.get("email", member.email)
     member.linkedin_url = body.get("linkedin_url", member.linkedin_url)
     if "is_active" in body:
-        member.is_active = bool(body["is_active"])
+        member.is_active = _to_bool(body["is_active"], default=member.is_active)
     if "display_order" in body:
-        member.display_order = int(body["display_order"])
+        member.display_order = _to_int(body["display_order"], default=member.display_order)
     member.save()
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f'Updated team member "{member.name}"')
     return JsonResponse({"ok": True})
