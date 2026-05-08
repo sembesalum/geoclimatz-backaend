@@ -101,6 +101,15 @@ def _to_int(value, default=0) -> int:
         return default
 
 
+def _split_full_name(value: str) -> tuple[str, str]:
+    parts = (value or "").strip().split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
+
+
 def _user_payload(user: User, request: HttpRequest | None = None) -> dict:
     profile = getattr(user, "profile", None)
     if user.is_superuser:
@@ -109,17 +118,27 @@ def _user_payload(user: User, request: HttpRequest | None = None) -> dict:
         raw_role = profile.role if profile else UserProfile.Role.COO
         resolved_role = raw_role if raw_role in LOGIN_ALLOWED_ROLES else UserProfile.Role.COO
     avatar = ""
+    linked_member = TeamMember.objects.filter(email__iexact=user.email).first() if user.email else None
     if profile:
         if getattr(profile, "avatar_file", None):
             avatar = _absolute_media_url(profile.avatar_file.url, request=request)
         elif profile.avatar_url:
             avatar = profile.avatar_url
+    if not avatar and linked_member:
+        if getattr(linked_member, "image_file", None):
+            avatar = _absolute_media_url(linked_member.image_file.url, request=request)
+        elif linked_member.image_url:
+            avatar = linked_member.image_url
+    team_first_name, team_last_name = _split_full_name(linked_member.name if linked_member else "")
+    effective_first_name = team_first_name or user.first_name
+    effective_last_name = team_last_name if linked_member else user.last_name
+    effective_email = linked_member.email if linked_member and linked_member.email else user.email
     return {
         "id": user.id,
         "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
+        "email": effective_email,
+        "first_name": effective_first_name,
+        "last_name": effective_last_name,
         "role": resolved_role,
         "status": profile.status if profile else UserProfile.Status.ACTIVE,
         "avatar_url": avatar,
@@ -985,6 +1004,18 @@ def team_collection(request: HttpRequest):
         is_active=_to_bool(body.get("is_active", True), default=True),
         display_order=_to_int(body.get("display_order", 0), default=0),
     )
+    linked_user = User.objects.filter(email__iexact=member.email).first() if member.email else None
+    if linked_user:
+        first_name, last_name = _split_full_name(member.name)
+        updates = []
+        if first_name and linked_user.first_name != first_name:
+            linked_user.first_name = first_name
+            updates.append("first_name")
+        if linked_user.last_name != last_name:
+            linked_user.last_name = last_name
+            updates.append("last_name")
+        if updates:
+            linked_user.save(update_fields=updates)
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.CREATE, message=f'Created team member "{member.name}"')
     return JsonResponse({"id": member.id}, status=201)
 
@@ -1009,6 +1040,7 @@ def team_detail(request: HttpRequest, member_id: int):
         return JsonResponse({"ok": True})
 
     body, files = _request_data(request)
+    previous_email = (member.email or "").strip().lower()
     member.name = body.get("name", member.name)
     member.role_title = body.get("role_title", member.role_title)
     member.bio = body.get("bio", member.bio)
@@ -1022,6 +1054,24 @@ def team_detail(request: HttpRequest, member_id: int):
     if "display_order" in body:
         member.display_order = _to_int(body["display_order"], default=member.display_order)
     member.save()
+    if role in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
+        linked_user = User.objects.filter(email__iexact=previous_email).first() if previous_email else None
+        if not linked_user and member.email:
+            linked_user = User.objects.filter(email__iexact=member.email).first()
+        if linked_user:
+            first_name, last_name = _split_full_name(member.name)
+            updates = []
+            if member.email and linked_user.email != member.email:
+                linked_user.email = member.email
+                updates.append("email")
+            if first_name and linked_user.first_name != first_name:
+                linked_user.first_name = first_name
+                updates.append("first_name")
+            if linked_user.last_name != last_name:
+                linked_user.last_name = last_name
+                updates.append("last_name")
+            if updates:
+                linked_user.save(update_fields=updates)
     ActivityLog.objects.create(actor=request.user, kind=ActivityLog.Kind.UPDATE, message=f'Updated team member "{member.name}"')
     return JsonResponse({"ok": True})
 
