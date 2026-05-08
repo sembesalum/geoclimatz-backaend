@@ -8,6 +8,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import models
 from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
+from django.http.multipartparser import MultiPartParser
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
@@ -51,7 +52,16 @@ def _json_body(request: HttpRequest) -> dict:
 def _request_data(request: HttpRequest) -> tuple[dict, dict]:
     content_type = request.content_type or ""
     if content_type.startswith("multipart/form-data"):
-        return request.POST.dict(), request.FILES
+        # Django reliably fills request.POST/request.FILES for multipart POST.
+        # For multipart PATCH/PUT we parse the stream explicitly.
+        if request.method == "POST":
+            return request.POST.dict(), request.FILES
+        try:
+            parser = MultiPartParser(request.META, request, request.upload_handlers, request.encoding)
+            data, files = parser.parse()
+            return data.dict(), files
+        except Exception:
+            return {}, {}
     return _json_body(request), {}
 
 
