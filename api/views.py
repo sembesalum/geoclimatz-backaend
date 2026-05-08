@@ -799,6 +799,8 @@ def admin_summary(_: HttpRequest):
 @roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def members_list(request: HttpRequest):
     users = User.objects.select_related("profile").all().order_by("first_name", "last_name", "username")
+    if _get_role(request.user) == UserProfile.Role.COO:
+        users = [u for u in users if _get_role(u) != UserProfile.Role.ADMIN]
     return JsonResponse({"results": [_user_payload(u, request=request) for u in users]})
 
 
