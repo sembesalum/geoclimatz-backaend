@@ -916,6 +916,59 @@ def contact_messages_collection(request: HttpRequest):
 
 
 @csrf_exempt
+@require_http_methods(["PATCH", "DELETE"])
+def contact_message_detail(request: HttpRequest, message_id: int):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+    role = _get_role(request.user)
+    if role not in CEO_ROLES:
+        return JsonResponse({"error": "Only Admin and CEO can update or delete contact messages"}, status=403)
+
+    msg = ContactMessage.objects.filter(pk=message_id).first()
+    if not msg:
+        return JsonResponse({"error": "Message not found"}, status=404)
+
+    if request.method == "DELETE":
+        label = msg.name
+        msg.delete()
+        ActivityLog.objects.create(
+            actor=request.user,
+            kind=ActivityLog.Kind.DELETE,
+            message=f'Deleted contact message from "{label}"',
+        )
+        return JsonResponse({"ok": True})
+
+    payload = _json_body(request)
+    if not any(k in payload for k in ("name", "email", "phone", "message")):
+        return JsonResponse({"error": "No fields to update"}, status=400)
+    if "name" in payload:
+        name = (payload.get("name") or "").strip()
+        if not name:
+            return JsonResponse({"error": "name cannot be empty"}, status=400)
+        msg.name = name
+    if "email" in payload:
+        email = (payload.get("email") or "").strip().lower()
+        if not email:
+            return JsonResponse({"error": "email cannot be empty"}, status=400)
+        msg.email = email
+    if "phone" in payload:
+        msg.phone = (payload.get("phone") or "").strip()
+    if "message" in payload:
+        body_text = (payload.get("message") or "").strip()
+        if not body_text:
+            return JsonResponse({"error": "message cannot be empty"}, status=400)
+        msg.body = body_text
+
+    msg.save()
+    ActivityLog.objects.create(
+        actor=request.user,
+        kind=ActivityLog.Kind.UPDATE,
+        message=f'Updated contact message #{msg.id} ({msg.email})',
+    )
+    return JsonResponse({"ok": True})
+
+
+@csrf_exempt
 @require_http_methods(["GET", "POST"])
 def newsletter_collection(request: HttpRequest):
     if request.method == "POST":

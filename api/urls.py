@@ -34,6 +34,7 @@ urlpatterns = [
     path('members/', views.members_list),
     path('member-requests/', views.member_requests),
     path('contact-messages/', views.contact_messages_collection),
+    path('contact-messages/<int:message_id>/', views.contact_message_detail),
     path('newsletter/', views.newsletter_collection),
     path('donations/', views.donations_collection),
     path('testimonials/', views.testimonials_collection),
