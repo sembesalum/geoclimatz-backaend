@@ -895,7 +895,13 @@ def newsletter_collection(request: HttpRequest):
         return JsonResponse({"error": "Authentication required"}, status=401)
     if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
         return JsonResponse({"error": "Forbidden for this role"}, status=403)
-    return JsonResponse({"results": list(NewsletterSubscriber.objects.values("id", "email", "name", "created_at"))})
+    return JsonResponse(
+        {
+            "results": list(
+                NewsletterSubscriber.objects.order_by("-created_at").values("id", "email", "name", "created_at")
+            )
+        }
+    )
 
 
 @csrf_exempt
