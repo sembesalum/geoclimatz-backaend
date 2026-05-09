@@ -585,9 +585,11 @@ def tasks_board(request: HttpRequest):
     if request.GET.get("due_to"):
         qs = qs.filter(due_date__lte=request.GET["due_to"])
 
-    grouped = {"pending": [], "in_progress": [], "completed": []}
+    grouped = {"pending": [], "in_progress": [], "completed": [], "ignored": []}
+    today = timezone.localdate()
     for task in qs:
-        column = task.column if task.column in grouped else Task.Column.PENDING
+        is_overdue = bool(task.due_date and task.due_date < today and task.column != Task.Column.COMPLETED)
+        column = "ignored" if is_overdue else (task.column if task.column in grouped else Task.Column.PENDING)
         grouped[column].append(_task_payload(task))
     return JsonResponse({"columns": grouped})
 
