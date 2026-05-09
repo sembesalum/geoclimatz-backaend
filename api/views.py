@@ -570,7 +570,8 @@ def _task_scope_for_user(request: HttpRequest):
     qs = Task.objects.select_related("assignee", "created_by").prefetch_related("subtasks", "comments", "followups")
     if role in {UserProfile.Role.ADMIN, UserProfile.Role.CEO}:
         return qs
-    return qs.filter(assignee=request.user)
+    # COO visibility: assigned tasks plus own created tasks.
+    return qs.filter(Q(assignee=request.user) | Q(created_by=request.user)).distinct()
 
 
 @require_GET
@@ -586,7 +587,8 @@ def tasks_board(request: HttpRequest):
 
     grouped = {"pending": [], "in_progress": [], "completed": []}
     for task in qs:
-        grouped[task.column].append(_task_payload(task))
+        column = task.column if task.column in grouped else Task.Column.PENDING
+        grouped[column].append(_task_payload(task))
     return JsonResponse({"columns": grouped})
 
 
