@@ -23,6 +23,9 @@ CORS_EXTRA_ORIGINS = [
     if origin.strip()
 ]
 
+# When True (env TRUST_LAN_DASHBOARD_CORS=1), allow dashboard session requests from private IPs (e.g. http://192.168.x.x:3000) even if DEBUG is False — useful for local Next.js hitting a hosted API.
+TRUST_LAN_DASHBOARD_CORS = os.environ.get("TRUST_LAN_DASHBOARD_CORS", "").strip().lower() in ("1", "true", "yes")
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
