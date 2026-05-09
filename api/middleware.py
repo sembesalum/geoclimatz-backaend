@@ -7,17 +7,27 @@ from django.conf import settings
 _PUBLIC_FORM_TAIL_SEGMENTS = frozenset({"newsletter", "donations"})
 
 
-def _private_dashboard_browser_origin(origin: str) -> bool:
-    """True if Origin looks like local dev (localhost, *.local, private IPv4/IPv6)."""
+def _localhost_loopback_origin(origin: str) -> bool:
+    """http(s)://localhost:any or 127.0.0.1:any — typical local Next/Vite."""
     try:
         parsed = urlparse(origin)
         if parsed.scheme not in ("http", "https"):
             return False
         host = parsed.hostname
-        if not host:
+        return bool(host and host in ("localhost", "127.0.0.1"))
+    except Exception:
+        return False
+
+
+def _private_lan_style_origin(origin: str) -> bool:
+    """*.local or RFC1918 host — opens dashboard via LAN IP / mDNS, not loopback hostname."""
+    try:
+        parsed = urlparse(origin)
+        if parsed.scheme not in ("http", "https"):
             return False
-        if host in ("localhost", "127.0.0.1"):
-            return True
+        host = parsed.hostname
+        if not host or host in ("localhost", "127.0.0.1"):
+            return False
         if host.endswith(".local"):
             return True
         addr = ipaddress.ip_address(host)
@@ -28,8 +38,36 @@ def _private_dashboard_browser_origin(origin: str) -> bool:
         return False
 
 
-def _allow_credentialed_private_dashboard_origins() -> bool:
+def _allow_credentialed_localhost_loopback_cors() -> bool:
+    return bool(getattr(settings, "DEBUG", False) or getattr(settings, "TRUST_LOCALHOST_LOOPBACK_CORS", False))
+
+
+def _allow_credentialed_lan_dashboard_cors() -> bool:
     return bool(getattr(settings, "DEBUG", False) or getattr(settings, "TRUST_LAN_DASHBOARD_CORS", False))
+
+
+def _origin_hostname_matches_suffix(hostname: str, suffix: str) -> bool:
+    """suffix like 'vercel.app' or '.vercel.app' — avoid spoofing (e.g. evilvercel.app)."""
+    suf = suffix.strip().lower().lstrip(".")
+    if not suf:
+        return False
+    host = hostname.strip().lower()
+    return host == suf or host.endswith("." + suf)
+
+
+def _credentialed_origin_allowed_by_suffix(origin: str, suffixes: tuple[str, ...]) -> bool:
+    if not suffixes:
+        return False
+    try:
+        parsed = urlparse(origin)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        return any(_origin_hostname_matches_suffix(host, s) for s in suffixes)
+    except Exception:
+        return False
 
 
 class DevCorsMiddleware:
@@ -50,6 +88,7 @@ class DevCorsMiddleware:
         self.get_response = get_response
         extra = frozenset(getattr(settings, "CORS_EXTRA_ORIGINS", []) or [])
         self.allowed_origins = self.BASE_ORIGINS | extra
+        self.origin_suffixes: tuple[str, ...] = tuple(getattr(settings, "CORS_ORIGIN_SUFFIXES", ()) or ())
 
     @staticmethod
     def _is_public_anonymous_post(request) -> bool:
@@ -85,7 +124,13 @@ class DevCorsMiddleware:
 
         if origin and origin in self.allowed_origins:
             self._apply_credentialed_cors(response, origin)
-        elif origin and _allow_credentialed_private_dashboard_origins() and _private_dashboard_browser_origin(origin):
+        elif origin and self.origin_suffixes and _credentialed_origin_allowed_by_suffix(origin, self.origin_suffixes):
+            self._apply_credentialed_cors(response, origin)
+        elif origin and _allow_credentialed_localhost_loopback_cors() and _localhost_loopback_origin(origin):
+            self._apply_credentialed_cors(response, origin)
+        elif origin and _allow_credentialed_lan_dashboard_cors() and (
+            _private_lan_style_origin(origin) or _localhost_loopback_origin(origin)
+        ):
             self._apply_credentialed_cors(response, origin)
 
         return response

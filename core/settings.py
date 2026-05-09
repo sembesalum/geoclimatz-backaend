@@ -23,8 +23,22 @@ CORS_EXTRA_ORIGINS = [
     if origin.strip()
 ]
 
+# Hostname suffixes for credentialed dashboard CORS (comma-separated), e.g. "vercel.app,netlify.app"
+CORS_ORIGIN_SUFFIXES = tuple(
+    s.strip()
+    for s in os.environ.get("CORS_ORIGIN_SUFFIXES", "").split(",")
+    if s.strip()
+)
+
 # When True (env TRUST_LAN_DASHBOARD_CORS=1), allow dashboard session requests from private IPs (e.g. http://192.168.x.x:3000) even if DEBUG is False — useful for local Next.js hitting a hosted API.
 TRUST_LAN_DASHBOARD_CORS = os.environ.get("TRUST_LAN_DASHBOARD_CORS", "").strip().lower() in ("1", "true", "yes")
+
+# Local frontends (localhost / 127.0.0.1, any port) against a deployed API with DEBUG=False.
+# Your repo uses Vite on :8080 and Next dashboard on :3000 — both are localhost hostnames.
+# Without DEBUG=True you still need either explicit CORS_EXTRA_ORIGINS per URL or TRUST_LOCALHOST_LOOPBACK_CORS=1.
+TRUST_LOCALHOST_LOOPBACK_CORS = (
+    os.environ.get("TRUST_LOCALHOST_LOOPBACK_CORS", "").strip().lower() in ("1", "true", "yes")
+)
 
 
 # Quick-start development settings - unsuitable for production
@@ -133,12 +147,17 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'https://geoclimatz.pythonanywhere.com',
-    'https://admin-dashboard.geoclimatz.org',
-]
+CSRF_TRUSTED_ORIGINS = list(
+    dict.fromkeys(
+        [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'https://geoclimatz.pythonanywhere.com',
+            'https://admin-dashboard.geoclimatz.org',
+            *CORS_EXTRA_ORIGINS,
+        ]
+    )
+)
 
 # Needed when frontend and backend run on different origins (e.g. localhost dashboard -> pythonanywhere API).
 SESSION_COOKIE_SAMESITE = 'None'
