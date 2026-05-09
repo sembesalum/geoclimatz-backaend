@@ -263,7 +263,7 @@ def auth_profile(request: HttpRequest):
 
 
 @require_GET
-@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
+@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO)
 def dashboard_overview(_: HttpRequest):
     visitors = TrafficPoint.objects.filter(period=TrafficPoint.Period.MONTHLY).aggregate(total=models.Sum("visitors"))["total"] or 0
     subscribers = NewsletterSubscriber.objects.count() or max(1, UserProfile.objects.count() * 4)
@@ -565,6 +565,13 @@ def content_analytics(request: HttpRequest):
     return JsonResponse({"results": rows})
 
 
+def _coo_can_touch_task(request: HttpRequest, task: Task) -> bool:
+    """COO may act on assigned tasks or unassigned tasks they created."""
+    if task.assignee_id == request.user.id:
+        return True
+    return task.assignee_id is None and task.created_by_id == request.user.id
+
+
 def _task_scope_for_user(request: HttpRequest):
     role = _get_role(request.user)
     qs = Task.objects.select_related("assignee", "created_by").prefetch_related("subtasks", "comments", "followups")
@@ -659,7 +666,7 @@ def task_detail(request: HttpRequest, task_id: int):
         return JsonResponse({"error": "Task not found"}, status=404)
 
     role = _get_role(request.user)
-    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+    if role == UserProfile.Role.COO and not _coo_can_touch_task(request, task):
         return JsonResponse({"error": "COO can access only assigned tasks"}, status=403)
 
     if request.method == "GET":
@@ -683,8 +690,12 @@ def task_detail(request: HttpRequest, task_id: int):
         return JsonResponse({"ok": True})
 
     body = _json_body(request)
-    task.title = body.get("title", task.title)
-    task.description = body.get("description", task.description)
+    coo_assignee = role == UserProfile.Role.COO and task.assignee_id == request.user.id
+    if not coo_assignee:
+        task.title = body.get("title", task.title)
+        task.description = body.get("description", task.description)
+    elif "title" in body or "description" in body:
+        return JsonResponse({"error": "Assignees cannot change task title or description"}, status=403)
     task.column = body.get("column", task.column)
     task.priority = body.get("priority", task.priority)
     task.parent_id = body.get("parent_id", task.parent_id)
@@ -719,7 +730,7 @@ def task_move(request: HttpRequest, task_id: int):
         return JsonResponse({"error": "Task not found"}, status=404)
 
     role = _get_role(request.user)
-    if role == UserProfile.Role.COO and task.assignee_id != request.user.id:
+    if role == UserProfile.Role.COO and not _coo_can_touch_task(request, task):
         return JsonResponse({"error": "COO can move only assigned tasks"}, status=403)
 
     body = _json_body(request)
