@@ -7,14 +7,27 @@ from django.conf import settings
 _PUBLIC_FORM_TAIL_SEGMENTS = frozenset({"newsletter", "donations"})
 
 
-def _localhost_loopback_origin(origin: str) -> bool:
-    """http(s)://localhost:any or 127.0.0.1:any — typical local Next/Vite."""
+def _parse_ip_host(hostname: str | None):
+    if not hostname:
+        return None
+    h = hostname.strip().strip("[]")
+    try:
+        return ipaddress.ip_address(h)
+    except ValueError:
+        return None
+
+
+def _is_loopback_browser_origin(origin: str) -> bool:
+    """True for localhost / 127.0.0.1 / ::1 / other loopback IPs (any port). Next may use IPv6."""
     try:
         parsed = urlparse(origin)
         if parsed.scheme not in ("http", "https"):
             return False
-        host = parsed.hostname
-        return bool(host and host in ("localhost", "127.0.0.1"))
+        host = (parsed.hostname or "").strip().lower()
+        if host in ("localhost", "127.0.0.1"):
+            return True
+        addr = _parse_ip_host(parsed.hostname)
+        return bool(addr and addr.is_loopback)
     except Exception:
         return False
 
@@ -26,12 +39,18 @@ def _private_lan_style_origin(origin: str) -> bool:
         if parsed.scheme not in ("http", "https"):
             return False
         host = parsed.hostname
-        if not host or host in ("localhost", "127.0.0.1"):
+        if not host:
+            return False
+        if host in ("localhost", "127.0.0.1"):
             return False
         if host.endswith(".local"):
             return True
-        addr = ipaddress.ip_address(host)
-        return bool(addr.is_private or addr.is_loopback)
+        addr = _parse_ip_host(host)
+        if not addr:
+            return False
+        if addr.is_loopback:
+            return False
+        return bool(addr.is_private)
     except ValueError:
         return False
     except Exception:
@@ -77,8 +96,10 @@ class DevCorsMiddleware:
         {
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "http://[::1]:3000",
             "http://localhost:8080",
             "http://127.0.0.1:8080",
+            "http://[::1]:8080",
             "https://geoclimatz.pythonanywhere.com",
             "https://admin-dashboard.geoclimatz.org",
         }
@@ -126,10 +147,10 @@ class DevCorsMiddleware:
             self._apply_credentialed_cors(response, origin)
         elif origin and self.origin_suffixes and _credentialed_origin_allowed_by_suffix(origin, self.origin_suffixes):
             self._apply_credentialed_cors(response, origin)
-        elif origin and _allow_credentialed_localhost_loopback_cors() and _localhost_loopback_origin(origin):
+        elif origin and _allow_credentialed_localhost_loopback_cors() and _is_loopback_browser_origin(origin):
             self._apply_credentialed_cors(response, origin)
         elif origin and _allow_credentialed_lan_dashboard_cors() and (
-            _private_lan_style_origin(origin) or _localhost_loopback_origin(origin)
+            _private_lan_style_origin(origin) or _is_loopback_browser_origin(origin)
         ):
             self._apply_credentialed_cors(response, origin)
 

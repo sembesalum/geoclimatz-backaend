@@ -50,7 +50,9 @@ SECRET_KEY = 'django-insecure-ic^ya279$%@+#pqszurm4&5fukd(puq318swzuatuprumm$1)^
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['*']
+# Accept any Host header (Django). This does **not** relax browser CORS: with session cookies,
+# `fetch(..., { credentials: 'include' })` requires a concrete `Access-Control-Allow-Origin` — never `*`.
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -152,6 +154,10 @@ CSRF_TRUSTED_ORIGINS = list(
         [
             'http://localhost:3000',
             'http://127.0.0.1:3000',
+            'http://[::1]:3000',
+            'http://localhost:8080',
+            'http://127.0.0.1:8080',
+            'http://[::1]:8080',
             'https://geoclimatz.pythonanywhere.com',
             'https://admin-dashboard.geoclimatz.org',
             *CORS_EXTRA_ORIGINS,
