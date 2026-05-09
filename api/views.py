@@ -925,33 +925,65 @@ def donations_collection(request: HttpRequest):
         return JsonResponse({"error": "Authentication required"}, status=401)
     if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
         return JsonResponse({"error": "Forbidden for this role"}, status=403)
-    return JsonResponse({"results": list(Donation.objects.values())})
+    return JsonResponse(
+        {
+            "results": list(
+                Donation.objects.order_by("-created_at").values(
+                    "id",
+                    "donor_name",
+                    "donor_email",
+                    "amount",
+                    "currency",
+                    "message",
+                    "anonymous",
+                    "created_at",
+                )
+            )
+        }
+    )
+
+
+def _testimonial_public_dict(row: Testimonial, request: HttpRequest) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "role_title": row.role_title,
+        "company": row.company,
+        "quote": row.quote,
+        "avatar_url": _absolute_media_url(row.avatar_file.url, request=request) if row.avatar_file else row.avatar_url,
+        "rating": row.rating,
+        "featured": row.featured,
+        "created_at": row.created_at.isoformat(),
+    }
 
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def testimonials_collection(request: HttpRequest):
     if request.method == "GET":
-        return JsonResponse(
-            {
-                "results": [
-                    {
-                        "id": row.id,
-                        "name": row.name,
-                        "role_title": row.role_title,
-                        "company": row.company,
-                        "quote": row.quote,
-                        "avatar_url": _absolute_media_url(row.avatar_file.url, request=request) if row.avatar_file else row.avatar_url,
-                        "rating": row.rating,
-                        "featured": row.featured,
-                        "created_by": row.created_by.username if row.created_by else None,
-                        "created_at": row.created_at.isoformat(),
-                    }
-                    for row in Testimonial.objects.select_related("created_by").all()
-                ]
-            }
-        )
+        qs = Testimonial.objects.select_related("created_by").order_by("-featured", "-created_at")
+        if request.user.is_authenticated:
+            role = _get_role(request.user)
+            if role not in COO_ROLES:
+                return JsonResponse({"error": "Forbidden for this role"}, status=403)
+            return JsonResponse(
+                {
+                    "results": [
+                        {
+                            **_testimonial_public_dict(row, request),
+                            "created_by": row.created_by.username if row.created_by else None,
+                        }
+                        for row in qs
+                    ]
+                }
+            )
+        return JsonResponse({"results": [_testimonial_public_dict(row, request) for row in qs]})
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+    role = _get_role(request.user)
+    if role not in COO_ROLES:
+        return JsonResponse({"error": "Forbidden for this role"}, status=403)
 
     body, files = _request_data(request)
     if not body.get("name") or not body.get("quote"):
@@ -1002,33 +1034,49 @@ def testimonial_detail(request: HttpRequest, testimonial_id: int):
     return JsonResponse({"ok": True})
 
 
+def _team_public_dict(row: TeamMember, request: HttpRequest) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "role_title": row.role_title,
+        "bio": row.bio,
+        "image_url": _absolute_media_url(row.image_file.url, request=request) if row.image_file else row.image_url,
+        "linkedin_url": row.linkedin_url,
+        "display_order": row.display_order,
+    }
+
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-@roles_required(UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO)
 def team_collection(request: HttpRequest):
-    role = _get_role(request.user)
     if request.method == "GET":
-        rows = TeamMember.objects.all()
-        if role == UserProfile.Role.COO:
-            rows = rows.filter(email__iexact=request.user.email)
-        return JsonResponse(
-            {
-                "results": [
-                    {
-                        "id": row.id,
-                        "name": row.name,
-                        "role_title": row.role_title,
-                        "bio": row.bio,
-                        "image_url": _absolute_media_url(row.image_file.url, request=request) if row.image_file else row.image_url,
-                        "email": row.email,
-                        "linkedin_url": row.linkedin_url,
-                        "is_active": row.is_active,
-                        "display_order": row.display_order,
-                    }
-                    for row in rows
-                ]
-            }
-        )
+        if request.user.is_authenticated:
+            role = _get_role(request.user)
+            if role not in COO_ROLES:
+                return JsonResponse({"error": "Forbidden for this role"}, status=403)
+            rows = TeamMember.objects.all().order_by("display_order", "id")
+            if role == UserProfile.Role.COO:
+                rows = rows.filter(email__iexact=request.user.email)
+            return JsonResponse(
+                {
+                    "results": [
+                        {
+                            **_team_public_dict(row, request),
+                            "email": row.email,
+                            "is_active": row.is_active,
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+        rows = TeamMember.objects.filter(is_active=True).order_by("display_order", "id")
+        return JsonResponse({"results": [_team_public_dict(row, request) for row in rows]})
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+    role = _get_role(request.user)
+    if role not in COO_ROLES:
+        return JsonResponse({"error": "Forbidden for this role"}, status=403)
 
     if role == UserProfile.Role.COO:
         return JsonResponse({"error": "COO cannot create team members"}, status=403)
