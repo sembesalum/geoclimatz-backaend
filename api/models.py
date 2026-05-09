@@ -219,6 +219,18 @@ class NewsletterSubscriber(TimeStampedModel):
         ordering = ["-created_at"]
 
 
+class ContactMessage(TimeStampedModel):
+    """Public contact form submissions from the marketing site."""
+
+    name = models.CharField(max_length=120)
+    email = models.EmailField()
+    phone = models.CharField(max_length=40, blank=True)
+    body = models.TextField()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class Donation(TimeStampedModel):
     donor_name = models.CharField(max_length=120)
     donor_email = models.EmailField()

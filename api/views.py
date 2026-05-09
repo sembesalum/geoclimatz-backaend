@@ -17,6 +17,7 @@ from .models import (
     ActivityLog,
     BlogPost,
     BrainstormIdea,
+    ContactMessage,
     ContentAnalytics,
     Donation,
     GalleryImage,
@@ -878,6 +879,40 @@ def member_requests(request: HttpRequest):
         return JsonResponse({"ok": True})
 
     return JsonResponse({"results": list(MemberRequest.objects.values())})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def contact_messages_collection(request: HttpRequest):
+    if request.method == "POST":
+        payload = _json_body(request)
+        name = (payload.get("name") or "").strip()
+        email = (payload.get("email") or "").strip().lower()
+        phone = (payload.get("phone") or "").strip()
+        body_text = (payload.get("message") or "").strip()
+        if not name or not email or not body_text:
+            return JsonResponse({"error": "name, email and message are required"}, status=400)
+        msg = ContactMessage.objects.create(name=name, email=email, phone=phone, body=body_text)
+        return JsonResponse({"id": msg.id}, status=201)
+
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+    if _get_role(request.user) not in {UserProfile.Role.ADMIN, UserProfile.Role.CEO, UserProfile.Role.COO}:
+        return JsonResponse({"error": "Forbidden for this role"}, status=403)
+    return JsonResponse(
+        {
+            "results": list(
+                ContactMessage.objects.order_by("-created_at").values(
+                    "id",
+                    "name",
+                    "email",
+                    "phone",
+                    "body",
+                    "created_at",
+                )
+            )
+        }
+    )
 
 
 @csrf_exempt

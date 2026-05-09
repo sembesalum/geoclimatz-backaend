@@ -33,6 +33,7 @@ urlpatterns = [
     path('admin/summary/', views.admin_summary),
     path('members/', views.members_list),
     path('member-requests/', views.member_requests),
+    path('contact-messages/', views.contact_messages_collection),
     path('newsletter/', views.newsletter_collection),
     path('donations/', views.donations_collection),
     path('testimonials/', views.testimonials_collection),

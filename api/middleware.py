@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 from django.conf import settings
 
 # POST endpoints that accept anonymous JSON from arbitrary marketing origins (no session cookie).
-_PUBLIC_FORM_TAIL_SEGMENTS = frozenset({"newsletter", "donations"})
+_PUBLIC_FORM_TAIL_SEGMENTS = frozenset({"newsletter", "donations", "contact-messages"})
 
 
 def _parse_ip_host(hostname: str | None):
@@ -90,7 +90,7 @@ def _credentialed_origin_allowed_by_suffix(origin: str, suffixes: tuple[str, ...
 
 
 class DevCorsMiddleware:
-    """CORS for dashboard allowlist + dev/LAN + open signup POST for newsletter/donations."""
+    """CORS for dashboard allowlist + dev/LAN + open marketing POSTs (newsletter, donations, contact)."""
 
     BASE_ORIGINS = frozenset(
         {

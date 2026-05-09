@@ -4,6 +4,7 @@ from .models import (
     ActivityLog,
     BlogPost,
     BrainstormIdea,
+    ContactMessage,
     ContentAnalytics,
     Donation,
     GalleryImage,
@@ -50,6 +51,7 @@ admin.site.register(ContentAnalytics)
 admin.site.register(TaskFollowUp)
 admin.site.register(MemberRequest)
 admin.site.register(NewsletterSubscriber)
+admin.site.register(ContactMessage)
 admin.site.register(Donation)
 admin.site.register(BrainstormIdea)
 admin.site.register(Testimonial)
